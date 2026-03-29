@@ -5,6 +5,7 @@ require_once __DIR__ . '/../lib/db.php';
 require_once __DIR__ . '/../lib/helpers.php';
 require_once __DIR__ . '/../lib/history_processor.php';
 require_once __DIR__ . '/../lib/pattern_catalog.php';
+require_once __DIR__ . '/../lib/pattern_names.php';
 
 $config = getConfig();
 $pdo = db();
@@ -14,6 +15,19 @@ $deviceId = trim((string)($_GET['device_id'] ?? ''));
 if ($deviceId === '') {
     http_response_code(400);
     exit('Device ID fehlt');
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $postedDeviceId = trim((string)($_POST['device_id'] ?? ''));
+    $patternKey = trim((string)($_POST['pattern_key'] ?? ''));
+    $displayName = trim((string)($_POST['display_name'] ?? ''));
+
+    if ($postedDeviceId === $deviceId && $patternKey !== '') {
+        savePatternName($pdo, $deviceId, $patternKey, $displayName);
+    }
+
+    header('Location: device_patterns.php?device_id=' . rawurlencode($deviceId));
+    exit;
 }
 
 $catalog = getDevicePatternCatalog($pdo, $config, $deviceId);
@@ -35,6 +49,8 @@ $catalog = getDevicePatternCatalog($pdo, $config, $deviceId);
         table{width:100%;border-collapse:collapse}
         th,td{padding:10px;border-bottom:1px solid #e8edf2;text-align:left}
         .muted{color:#6b7785}
+        .name-form{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+        .name-form input{flex:1;min-width:180px;padding:8px 10px;border:1px solid #cfd8e3;border-radius:8px}
     </style>
 </head>
 <body>
@@ -53,6 +69,18 @@ $catalog = getDevicePatternCatalog($pdo, $config, $deviceId);
                 <div class="card">
                     <h2 style="margin-top:0"><?=h($pattern['label'])?></h2>
                     <div class="muted"><?=h($pattern['profile_label'])?></div>
+                    <form class="name-form" method="post">
+                        <input type="hidden" name="device_id" value="<?=h($catalog['device_id'])?>">
+                        <input type="hidden" name="pattern_key" value="<?=h($pattern['pattern_key'])?>">
+                        <input
+                            type="text"
+                            name="display_name"
+                            value="<?= $pattern['label'] !== $pattern['default_label'] ? h($pattern['label']) : '' ?>"
+                            placeholder="<?=h($pattern['default_label'])?> umbenennen"
+                        >
+                        <button class="btn" type="submit">Speichern</button>
+                    </form>
+                    <div class="muted" style="margin-top:-4px;margin-bottom:12px">Leer speichern stellt den Standardnamen <?=h($pattern['default_label'])?> wieder her.</div>
                     <div class="stats">
                         <div class="stat"><strong>Anzahl</strong><br><?= (int)$pattern['count'] ?></div>
                         <div class="stat"><strong>Dauer</strong><br><?=h(secondsToHuman((int)$pattern['avg_duration_seconds']))?></div>

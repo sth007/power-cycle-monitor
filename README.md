@@ -37,3 +37,4 @@ PHP project for:
 - `public/patterns.php` lists all devices with detected historical program groups
 - `public/device_patterns.php` shows detected program clusters for one device
 - every cluster visualizes its normalized 60-step centroid profile and recent matching cycles
+- detected groups can be renamed per device and are stored in `pattern_names`
