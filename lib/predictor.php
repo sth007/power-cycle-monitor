@@ -57,14 +57,79 @@ function buildCurrentCycleSnapshot(PDO $pdo, array $config, array $stateRow): ?a
     return [
         'device_id' => (string)$stateRow['device_id'],
         'device_name' => (string)$stateRow['device_name'],
-        'status' => 'laeuft',
+        'status' => 'läuft',
         'cycle_start' => $cycleStart,
         'last_ts' => $lastTs,
         'elapsed_seconds' => $elapsedSeconds,
         'energy_wh' => $energyWh,
         'peak_power' => $peakPower,
+        'current_power' => (float)($rows[count($rows) - 1]['cur_power'] ?? 0),
         'normalized_points' => $normalized,
         'prediction' => $prediction,
+    ];
+}
+
+function buildLiveChartData(PDO $pdo, array $config, array $liveItem): array
+{
+    $rows = fetchCyclePowerRows(
+        $pdo,
+        $config['source_table'],
+        (string)$liveItem['device_id'],
+        (string)$liveItem['cycle_start'],
+        (string)$liveItem['last_ts']
+    );
+    $rows = downsampleRows($rows, 160);
+
+    $labels = [];
+    $actual = [];
+    foreach ($rows as $row) {
+        $labels[] = dt((string)$row['dtmod']);
+        $actual[] = round((float)$row['cur_power'], 2);
+    }
+
+    $projection = array_fill(0, count($labels), null);
+    $prediction = $liveItem['prediction'] ?? null;
+    if (!$prediction || empty($prediction['projected_profile_points'])) {
+        return [
+            'labels' => $labels,
+            'actual' => $actual,
+            'projection' => $projection,
+        ];
+    }
+
+    $predictedTotalSeconds = max(1, (int)$prediction['predicted_total_seconds']);
+    $elapsedSeconds = max(1, (int)$liveItem['elapsed_seconds']);
+    $currentSegment = min(59, max(0, (int)floor(($elapsedSeconds / $predictedTotalSeconds) * 60)));
+    $profile = $prediction['projected_profile_points'];
+    $lastTs = strtotime((string)$liveItem['last_ts']);
+    if ($lastTs === false) {
+        return [
+            'labels' => $labels,
+            'actual' => $actual,
+            'projection' => $projection,
+        ];
+    }
+
+    $projection[count($projection) - 1] = round((float)$liveItem['current_power'], 2);
+    for ($segment = $currentSegment + 1; $segment < 60; $segment++) {
+        $segmentTs = strtotime((string)$liveItem['cycle_start']);
+        if ($segmentTs === false) {
+            break;
+        }
+        $segmentTs += (int)round(($segment / 59) * $predictedTotalSeconds);
+        if ($segmentTs <= $lastTs) {
+            continue;
+        }
+
+        $labels[] = date('d.m.Y H:i:s', $segmentTs);
+        $actual[] = null;
+        $projection[] = round((float)$profile[$segment], 2);
+    }
+
+    return [
+        'labels' => $labels,
+        'actual' => $actual,
+        'projection' => $projection,
     ];
 }
 
@@ -133,6 +198,7 @@ function predictRemainingRuntime(PDO $pdo, array $config, string $deviceId, int 
             'score' => $totalScore,
             'weight' => 1 / max(0.05, $totalScore),
             'profile_label' => buildProfileLabel(is_array($phaseSignature) ? $phaseSignature : []),
+            'points' => array_map('floatval', $historicalPoints),
         ];
     }
 
@@ -153,6 +219,7 @@ function predictRemainingRuntime(PDO $pdo, array $config, string $deviceId, int 
     foreach ($matches as $match) {
         $predictedTotalSeconds += $match['duration_seconds'] * ($match['weight'] / $weightSum);
     }
+    $projectedProfile = buildWeightedProfile($matches, $weightSum);
 
     $predictedTotalSeconds = (int)round(max($elapsedSeconds, $predictedTotalSeconds));
     $remainingSeconds = max(0, $predictedTotalSeconds - $elapsedSeconds);
@@ -165,6 +232,7 @@ function predictRemainingRuntime(PDO $pdo, array $config, string $deviceId, int 
         'confidence_label' => predictionConfidenceLabel((float)$matches[0]['score'], count($matches)),
         'matched_cycles' => count($matches),
         'profile_label' => $matches[0]['profile_label'],
+        'projected_profile_points' => $projectedProfile,
     ];
 }
 
@@ -200,6 +268,23 @@ function resamplePoints(array $points, int $targetCount): array
     }
 
     return $out;
+}
+
+function buildWeightedProfile(array $matches, float $weightSum): array
+{
+    $profile = array_fill(0, 60, 0.0);
+    if ($weightSum <= 0) {
+        return $profile;
+    }
+
+    foreach ($matches as $match) {
+        $weight = $match['weight'] / $weightSum;
+        for ($i = 0; $i < 60; $i++) {
+            $profile[$i] += ((float)$match['points'][$i]) * $weight;
+        }
+    }
+
+    return array_map(static fn(float $value): float => round($value, 3), $profile);
 }
 
 function buildProfileLabel(array $phaseSignature): string

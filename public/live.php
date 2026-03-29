@@ -4,19 +4,14 @@ declare(strict_types=1);
 require_once __DIR__ . '/../lib/db.php';
 require_once __DIR__ . '/../lib/helpers.php';
 require_once __DIR__ . '/../lib/history_processor.php';
-require_once __DIR__ . '/../lib/predictor.php';
 
 $config = getConfig();
-$pdo = db();
-runHistoryProcessing();
-
-$stateTable = $config['state_table'];
-$liveItems = getLiveCyclePredictions($pdo, $config, $pdo->query("SELECT * FROM {$stateTable} ORDER BY device_name, device_id")->fetchAll());
 ?><!doctype html>
 <html lang="de">
 <head>
     <meta charset="utf-8">
     <title>Laufende Programme</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;padding:20px;color:#24323f}
         .wrap{max-width:1100px;margin:0 auto}
@@ -25,6 +20,8 @@ $liveItems = getLiveCyclePredictions($pdo, $config, $pdo->query("SELECT * FROM {
         .btn{display:inline-block;padding:8px 12px;background:#1f6feb;color:#fff;text-decoration:none;border-radius:8px}
         .muted{color:#6b7785}
         .subcard{background:#f8fbff;border:1px solid #dbe6f2;border-radius:10px;padding:14px}
+        .chart-wrap{height:240px;margin-top:14px}
+        .stamp{font-size:13px;color:#6b7785}
     </style>
 </head>
 <body>
@@ -33,37 +30,126 @@ $liveItems = getLiveCyclePredictions($pdo, $config, $pdo->query("SELECT * FROM {
         <a class="btn" href="index.php">← Übersicht</a>
         <h1>Laufende Programme</h1>
         <div class="muted">Prognosen basieren auf normierten 60-Punkte-Profilen früherer Vorgänge.</div>
+        <div class="stamp" id="generatedAt">lade Live-Daten...</div>
     </div>
 
-    <?php if (!$liveItems): ?>
-        <div class="card">Aktuell ist kein laufendes Programm erkannt.</div>
-    <?php else: ?>
-        <div class="grid">
-            <?php foreach ($liveItems as $item): ?>
-                <div class="card">
-                    <h2 style="margin-top:0"><?=h($item['device_name'])?></h2>
-                    <div class="subcard">
-                        <h3 style="margin-top:0">Prognose</h3>
-                        <?php if ($item['prediction']): ?>
-                            <p>Status: <?=h($item['prediction']['status'])?></p>
-                            <p>Wahrscheinlichster Typ: <?=h($item['prediction']['profile_label'])?></p>
-                            <p>Ähnlich zu <?= (int)$item['prediction']['matched_cycles'] ?> früheren Vorgängen</p>
-                            <p>Geschätzte Gesamtdauer: <?= (int)round(((int)$item['prediction']['predicted_total_seconds']) / 60) ?> Minuten</p>
-                            <p>Bereits vergangen: <?= (int)round(((int)$item['prediction']['elapsed_seconds']) / 60) ?> Minuten</p>
-                            <p>Noch verbleibend: <?= (int)ceil(((int)$item['prediction']['remaining_seconds']) / 60) ?> Minuten</p>
-                            <p>Sicherheit: <?=h($item['prediction']['confidence_label'])?></p>
-                        <?php else: ?>
-                            <p>Status: läuft</p>
-                            <p>Geschätzte Gesamtdauer: noch keine belastbare Prognose</p>
-                            <p>Bereits vergangen: <?= (int)round(((int)$item['elapsed_seconds']) / 60) ?> Minuten</p>
-                            <p>Noch verbleibend: noch keine belastbare Prognose</p>
-                            <p>Sicherheit: niedrig</p>
-                        <?php endif; ?>
-                    </div>
-                </div>
-            <?php endforeach; ?>
-        </div>
-    <?php endif; ?>
+    <div id="liveContainer" class="grid"></div>
 </div>
+<script>
+const liveContainer = document.getElementById('liveContainer');
+const generatedAt = document.getElementById('generatedAt');
+const charts = new Map();
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+}
+
+function renderCard(item) {
+    const prediction = item.prediction;
+    const predictionHtml = prediction ? `
+        <p>Status: ${escapeHtml(prediction.status)}</p>
+        <p>Wahrscheinlichster Typ: ${escapeHtml(prediction.profile_label)}</p>
+        <p>Aktueller Wert: ${item.current_power.toFixed(1)} W</p>
+        <p>Ähnlich zu ${prediction.matched_cycles} früheren Vorgängen</p>
+        <p>Geschätzte Gesamtdauer: ${prediction.predicted_total_minutes} Minuten</p>
+        <p>Bereits vergangen: ${item.elapsed_minutes} Minuten</p>
+        <p>Noch verbleibend: ${prediction.remaining_minutes} Minuten</p>
+        <p>Sicherheit: ${escapeHtml(prediction.confidence_label)}</p>
+    ` : `
+        <p>Status: läuft</p>
+        <p>Aktueller Wert: ${item.current_power.toFixed(1)} W</p>
+        <p>Geschätzte Gesamtdauer: noch keine belastbare Prognose</p>
+        <p>Bereits vergangen: ${item.elapsed_minutes} Minuten</p>
+        <p>Noch verbleibend: noch keine belastbare Prognose</p>
+        <p>Sicherheit: niedrig</p>
+    `;
+
+    return `
+        <div class="card" data-device-id="${escapeHtml(item.device_id)}">
+            <h2 style="margin-top:0">${escapeHtml(item.device_name)}</h2>
+            <div class="muted">Start: ${escapeHtml(item.cycle_start)}</div>
+            <div class="subcard">
+                <h3 style="margin-top:0">Prognose</h3>
+                ${predictionHtml}
+            </div>
+            <div class="chart-wrap">
+                <canvas id="chart-${escapeHtml(item.device_id)}"></canvas>
+            </div>
+        </div>
+    `;
+}
+
+function upsertChart(item) {
+    const canvas = document.getElementById(`chart-${item.device_id}`);
+    if (!canvas) {
+        return;
+    }
+
+    const data = {
+        labels: item.chart.labels,
+        datasets: [
+            {
+                label: 'Ist-Leistung',
+                data: item.chart.actual,
+                borderWidth: 2,
+                borderColor: '#1f6feb',
+                pointRadius: 0,
+                tension: 0.15,
+                spanGaps: true
+            },
+            {
+                label: 'Prognose',
+                data: item.chart.projection,
+                borderWidth: 2,
+                borderColor: '#d97706',
+                borderDash: [6, 4],
+                pointRadius: 0,
+                tension: 0.15,
+                spanGaps: true
+            }
+        ]
+    };
+
+    charts.set(item.device_id, new Chart(canvas, {
+        type: 'line',
+        data,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { display: true } },
+            scales: {
+                x: { ticks: { maxTicksLimit: 8 } },
+                y: { title: { display: true, text: 'Watt' } }
+            }
+        }
+    }));
+}
+
+async function refreshLiveView() {
+    const response = await fetch('live_data.php', { cache: 'no-store' });
+    const payload = await response.json();
+    generatedAt.textContent = `zuletzt aktualisiert: ${new Date(payload.generated_at).toLocaleString('de-DE')}`;
+
+    charts.forEach(chart => chart.destroy());
+    charts.clear();
+
+    if (!payload.items.length) {
+        liveContainer.innerHTML = '<div class="card">Aktuell ist kein laufendes Programm erkannt.</div>';
+        return;
+    }
+
+    liveContainer.innerHTML = payload.items.map(renderCard).join('');
+    payload.items.forEach(upsertChart);
+}
+
+refreshLiveView();
+setInterval(refreshLiveView, 15000);
+</script>
 </body>
 </html>
