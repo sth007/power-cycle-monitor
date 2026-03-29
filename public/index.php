@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../lib/db.php';
 require_once __DIR__ . '/../lib/helpers.php';
 require_once __DIR__ . '/../lib/history_processor.php';
+require_once __DIR__ . '/../lib/prediction.php';
 
 $config = getConfig();
 $pdo = db();
@@ -31,6 +32,7 @@ foreach ($stmt->fetchAll() as $row) {
 
 $stateTable = $config['state_table'];
 $stateRows = $pdo->query("SELECT device_id, device_name, last_processed_dt, carry_active, carry_cycle_start FROM {$stateTable} ORDER BY device_name, device_id")->fetchAll();
+$openPredictions = getOpenCyclePredictions($pdo, $config, $pdo->query("SELECT * FROM {$stateTable} ORDER BY device_name, device_id")->fetchAll());
 ?><!doctype html>
 <html lang="de">
 <head>
@@ -53,6 +55,9 @@ $stateRows = $pdo->query("SELECT device_id, device_name, last_processed_dt, carr
         th,td{padding:10px;border-bottom:1px solid #e8edf2;text-align:left}
         .btn{display:inline-block;padding:8px 12px;background:#1f6feb;color:#fff;text-decoration:none;border-radius:8px}
         .small{font-size:13px}
+        .running-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+        .running{border:1px solid #d9e7d1;background:#f8fff4}
+        .eta{display:inline-block;margin-top:10px;background:#17803d;color:#fff;padding:6px 10px;border-radius:999px;font-weight:bold}
     </style>
 </head>
 <body>
@@ -76,6 +81,32 @@ $stateRows = $pdo->query("SELECT device_id, device_name, last_processed_dt, carr
         <?= (int)$processInfo['processed_devices'] ?> Geräte geprüft,
         <?= (int)$processInfo['new_cycles_written'] ?> abgeschlossene Vorgänge neu/aktualisiert gespeichert.
     </div>
+
+    <?php if ($openPredictions): ?>
+    <div class="card">
+        <h2 style="margin-top:0">Laufende Vorgänge mit Restzeit</h2>
+        <div class="running-grid">
+            <?php foreach ($openPredictions as $item): ?>
+                <div class="card running" style="margin:0">
+                    <strong><?=h($item['device_name'])?></strong>
+                    <div class="small muted" style="margin-top:8px">Start: <?=h(dt($item['cycle_start']))?></div>
+                    <div class="small">Bisher: <?=h(secondsToHuman((int)$item['duration_seconds']))?></div>
+                    <div class="small">Verbrauch bisher: <?=number_format((float)$item['energy_wh'], 1, ',', '.')?> Wh</div>
+                    <?php if ($item['prediction']): ?>
+                        <div class="eta">noch ca. <?= (int)ceil(((int)$item['prediction']['remaining_seconds']) / 60) ?> min</div>
+                        <div class="small muted" style="margin-top:8px">
+                            Gesamt geschätzt: <?=h(secondsToHuman((int)$item['prediction']['predicted_total_seconds']))?>,
+                            Prognose <?=h($item['prediction']['confidence_label'])?>,
+                            Musterbasis <?= (int)$item['prediction']['matched_cycles'] ?> Zyklen
+                        </div>
+                    <?php else: ?>
+                        <div class="small muted" style="margin-top:10px">Noch keine belastbare Prognose. Es fehlen entweder genügend Historienläufe oder ein paar Minuten aktuelle Laufzeit.</div>
+                    <?php endif; ?>
+                </div>
+            <?php endforeach; ?>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <div class="card">
         <div class="calendar">

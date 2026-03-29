@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../lib/db.php';
 require_once __DIR__ . '/../lib/helpers.php';
+require_once __DIR__ . '/../lib/prediction.php';
 
 $config = getConfig();
 $pdo = db();
@@ -16,6 +17,14 @@ $cyclesTable = $config['cycles_table'];
 $stmt = $pdo->prepare("SELECT * FROM {$cyclesTable} WHERE is_closed = 1 AND DATE(cycle_start) = :date ORDER BY cycle_start ASC");
 $stmt->execute(['date' => $date]);
 $cycles = $stmt->fetchAll();
+
+$stateTable = $config['state_table'];
+$openPredictions = array_values(array_filter(
+    getOpenCyclePredictions($pdo, $config, $pdo->query("SELECT * FROM {$stateTable} ORDER BY device_name, device_id")->fetchAll()),
+    static function (array $item) use ($date): bool {
+        return substr($item['cycle_start'], 0, 10) === $date;
+    }
+));
 ?><!doctype html>
 <html lang="de">
 <head>
@@ -26,6 +35,7 @@ $cycles = $stmt->fetchAll();
         .wrap{max-width:1100px;margin:0 auto}.card{background:#fff;border-radius:12px;padding:18px;margin-bottom:18px;box-shadow:0 2px 10px rgba(0,0,0,.06)}
         table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #e8edf2;text-align:left}
         a.btn{display:inline-block;padding:8px 12px;background:#1f6feb;color:#fff;text-decoration:none;border-radius:8px}
+        .hint{background:#f8fff4;border:1px solid #d9e7d1;border-radius:10px;padding:12px;margin-bottom:12px}
     </style>
 </head>
 <body>
@@ -36,6 +46,18 @@ $cycles = $stmt->fetchAll();
     </div>
 
     <div class="card">
+        <?php foreach ($openPredictions as $item): ?>
+            <div class="hint">
+                <strong><?=h($item['device_name'])?></strong> läuft noch.
+                Bisher <?=h(secondsToHuman((int)$item['duration_seconds']))?>.
+                <?php if ($item['prediction']): ?>
+                    Noch ca. <?= (int)ceil(((int)$item['prediction']['remaining_seconds']) / 60) ?> min
+                    (Prognose <?=h($item['prediction']['confidence_label'])?>).
+                <?php else: ?>
+                    Eine Restzeit erscheint, sobald genug Verlaufsdaten vorliegen.
+                <?php endif; ?>
+            </div>
+        <?php endforeach; ?>
         <table>
             <thead>
             <tr>

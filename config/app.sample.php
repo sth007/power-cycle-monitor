@@ -58,4 +58,10 @@ return [
         'chart_padding_after_minutes' => 2,
         'chart_max_points' => 1200,
     ],
+
+    'prediction' => [
+        'min_predict_after_minutes' => 3,
+        'min_history_cycles' => 3,
+        'history_limit' => 12,
+    ],
 ];
