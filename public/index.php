@@ -4,7 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../lib/db.php';
 require_once __DIR__ . '/../lib/helpers.php';
 require_once __DIR__ . '/../lib/history_processor.php';
-require_once __DIR__ . '/../lib/prediction.php';
+require_once __DIR__ . '/../lib/predictor.php';
 
 $config = getConfig();
 $pdo = db();
@@ -31,8 +31,17 @@ foreach ($stmt->fetchAll() as $row) {
 }
 
 $stateTable = $config['state_table'];
-$stateRows = $pdo->query("SELECT device_id, device_name, last_processed_dt, carry_active, carry_cycle_start FROM {$stateTable} ORDER BY device_name, device_id")->fetchAll();
-$openPredictions = getOpenCyclePredictions($pdo, $config, $pdo->query("SELECT * FROM {$stateTable} ORDER BY device_name, device_id")->fetchAll());
+$fullStateRows = $pdo->query("SELECT * FROM {$stateTable} ORDER BY device_name, device_id")->fetchAll();
+$stateRows = array_map(static function (array $row): array {
+    return [
+        'device_id' => $row['device_id'],
+        'device_name' => $row['device_name'],
+        'last_processed_dt' => $row['last_processed_dt'],
+        'carry_active' => $row['carry_active'],
+        'carry_cycle_start' => $row['carry_cycle_start'],
+    ];
+}, $fullStateRows);
+$openPredictions = getLiveCyclePredictions($pdo, $config, $fullStateRows);
 ?><!doctype html>
 <html lang="de">
 <head>
@@ -69,6 +78,7 @@ $openPredictions = getOpenCyclePredictions($pdo, $config, $pdo->query("SELECT * 
                 <div class="muted small">Historie wird bei jedem Aufruf nur ab dem letzten verarbeiteten Zeitpunkt fortgeschrieben.</div>
             </div>
             <div>
+                <a class="btn" href="live.php" style="margin-right:10px">Live</a>
                 <a class="btn" href="?month=<?=h($prevMonth)?>">◀</a>
                 <strong style="margin:0 10px"><?=h(monthName($monthNum) . ' ' . $year)?></strong>
                 <a class="btn" href="?month=<?=h($nextMonth)?>">▶</a>
@@ -90,18 +100,20 @@ $openPredictions = getOpenCyclePredictions($pdo, $config, $pdo->query("SELECT * 
                 <div class="card running" style="margin:0">
                     <strong><?=h($item['device_name'])?></strong>
                     <div class="small muted" style="margin-top:8px">Start: <?=h(dt($item['cycle_start']))?></div>
-                    <div class="small">Bisher: <?=h(secondsToHuman((int)$item['duration_seconds']))?></div>
+                    <div class="small">Bisher: <?=h(secondsToHuman((int)$item['elapsed_seconds']))?></div>
                     <div class="small">Verbrauch bisher: <?=number_format((float)$item['energy_wh'], 1, ',', '.')?> Wh</div>
                     <?php if ($item['prediction']): ?>
                         <div class="eta">noch ca. <?= (int)ceil(((int)$item['prediction']['remaining_seconds']) / 60) ?> min</div>
                         <div class="small muted" style="margin-top:8px">
                             Gesamt geschätzt: <?=h(secondsToHuman((int)$item['prediction']['predicted_total_seconds']))?>,
                             Prognose <?=h($item['prediction']['confidence_label'])?>,
-                            Musterbasis <?= (int)$item['prediction']['matched_cycles'] ?> Zyklen
+                            ähnlich zu <?= (int)$item['prediction']['matched_cycles'] ?> Vorgängen,
+                            <?=h($item['prediction']['profile_label'])?>
                         </div>
                     <?php else: ?>
                         <div class="small muted" style="margin-top:10px">Noch keine belastbare Prognose. Es fehlen entweder genügend Historienläufe oder ein paar Minuten aktuelle Laufzeit.</div>
                     <?php endif; ?>
+                    <div class="small" style="margin-top:10px"><a href="live.php" class="btn">Live-Ansicht</a></div>
                 </div>
             <?php endforeach; ?>
         </div>

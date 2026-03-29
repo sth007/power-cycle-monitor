@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../lib/db.php';
 require_once __DIR__ . '/../lib/helpers.php';
-require_once __DIR__ . '/../lib/prediction.php';
+require_once __DIR__ . '/../lib/predictor.php';
 
 $config = getConfig();
 $pdo = db();
@@ -20,7 +20,7 @@ $cycles = $stmt->fetchAll();
 
 $stateTable = $config['state_table'];
 $openPredictions = array_values(array_filter(
-    getOpenCyclePredictions($pdo, $config, $pdo->query("SELECT * FROM {$stateTable} ORDER BY device_name, device_id")->fetchAll()),
+    getLiveCyclePredictions($pdo, $config, $pdo->query("SELECT * FROM {$stateTable} ORDER BY device_name, device_id")->fetchAll()),
     static function (array $item) use ($date): bool {
         return substr($item['cycle_start'], 0, 10) === $date;
     }
@@ -49,10 +49,10 @@ $openPredictions = array_values(array_filter(
         <?php foreach ($openPredictions as $item): ?>
             <div class="hint">
                 <strong><?=h($item['device_name'])?></strong> läuft noch.
-                Bisher <?=h(secondsToHuman((int)$item['duration_seconds']))?>.
+                Bisher <?=h(secondsToHuman((int)$item['elapsed_seconds']))?>.
                 <?php if ($item['prediction']): ?>
                     Noch ca. <?= (int)ceil(((int)$item['prediction']['remaining_seconds']) / 60) ?> min
-                    (Prognose <?=h($item['prediction']['confidence_label'])?>).
+                    (Prognose <?=h($item['prediction']['confidence_label'])?>, <?=h($item['prediction']['profile_label'])?>).
                 <?php else: ?>
                     Eine Restzeit erscheint, sobald genug Verlaufsdaten vorliegen.
                 <?php endif; ?>

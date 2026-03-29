@@ -38,6 +38,17 @@ CREATE TABLE IF NOT EXISTS history_processing_state (
     PRIMARY KEY (device_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS cycle_patterns (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    cycle_id INT NOT NULL,
+    device_id VARCHAR(30) NOT NULL,
+    normalized_points JSON NOT NULL,
+    phase_signature JSON DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_cycle (cycle_id),
+    KEY idx_device_id (device_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Für schnellere Rohdatenabfrage:
 -- Den Tabellennamen power_log ggf. anpassen.
 CREATE INDEX idx_powerlog_device_dtmod ON power_log (device_id, dtmod);

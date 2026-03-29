@@ -62,6 +62,6 @@ return [
     'prediction' => [
         'min_predict_after_minutes' => 3,
         'min_history_cycles' => 3,
-        'history_limit' => 12,
+        'history_limit' => 30,
     ],
 ];

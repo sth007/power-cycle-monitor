@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/pattern_builder.php';
 
 function runHistoryProcessing(): array
 {
@@ -98,10 +99,17 @@ function runHistoryProcessing(): array
 				$cycleEndTs = strtotime($current['last_active_ts']);
 				$durationSeconds = max(0, $cycleEndTs - $cycleStartTs);
 
-				if ($durationSeconds >= $minCycleSeconds) {
-					upsertCycle($pdo, $cyclesTable, $deviceId, $current, $durationSeconds, true, $current['last_active_ts']);
-					$newCycles++;
-				}
+					if ($durationSeconds >= $minCycleSeconds) {
+						$cycleId = upsertCycle($pdo, $cyclesTable, $deviceId, $current, $durationSeconds, true, $current['last_active_ts']);
+						if ($cycleId !== null) {
+							try {
+								saveCyclePattern($pdo, $config, $cycleId, $deviceId, $current['cycle_start'], $current['last_active_ts'], (float)$current['energy_wh'], (float)$current['peak_power']);
+							} catch (PDOException $e) {
+								// Pattern persistence is optional; cycle detection should still succeed.
+							}
+						}
+						$newCycles++;
+					}
 
 				$current = null;
 
@@ -132,6 +140,12 @@ function runHistoryProcessing(): array
 		$processedDevices++;
 	}
 
+	try {
+		syncMissingCyclePatterns($pdo, $config, 25);
+	} catch (PDOException $e) {
+		// Pattern backfill is optional.
+	}
+
 	return [
 		'processed_devices' => $processedDevices,
 		'new_cycles_written' => $newCycles,
@@ -156,7 +170,7 @@ function restoreCarryState($state): ?array
 	];
 }
 
-function upsertCycle(PDO $pdo, string $cyclesTable, string $deviceId, array $current, int $durationSeconds, bool $isClosed, string $sourceLastDt): void
+function upsertCycle(PDO $pdo, string $cyclesTable, string $deviceId, array $current, int $durationSeconds, bool $isClosed, string $sourceLastDt): ?int
 {
 	$avgPower = $durationSeconds > 0 ? ($current['energy_wh'] / ($durationSeconds / 3600.0)) : 0.0;
 
@@ -191,6 +205,16 @@ function upsertCycle(PDO $pdo, string $cyclesTable, string $deviceId, array $cur
 		'is_closed' => $isClosed ? 1 : 0,
 		'source_last_dt' => $sourceLastDt,
 	]);
+
+	$idStmt = $pdo->prepare("SELECT id FROM {$cyclesTable} WHERE device_id = :device_id AND cycle_start = :cycle_start AND cycle_end = :cycle_end LIMIT 1");
+	$idStmt->execute([
+		'device_id' => $deviceId,
+		'cycle_start' => $current['cycle_start'],
+		'cycle_end' => $current['last_active_ts'],
+	]);
+	$cycleId = $idStmt->fetchColumn();
+
+	return $cycleId !== false ? (int)$cycleId : null;
 }
 
 function saveProcessingState(PDO $pdo, string $stateTable, string $deviceId, string $deviceName, ?string $lastProcessedDt, ?array $current): void
