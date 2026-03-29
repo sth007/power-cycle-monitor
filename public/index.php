@@ -78,6 +78,7 @@ $openPredictions = getLiveCyclePredictions($pdo, $config, $fullStateRows);
                 <div class="muted small">Historie wird bei jedem Aufruf nur ab dem letzten verarbeiteten Zeitpunkt fortgeschrieben.</div>
             </div>
             <div>
+                <a class="btn" href="patterns.php" style="margin-right:10px">Muster</a>
                 <a class="btn" href="live.php" style="margin-right:10px">Live</a>
                 <a class="btn" href="?month=<?=h($prevMonth)?>">◀</a>
                 <strong style="margin:0 10px"><?=h(monthName($monthNum) . ' ' . $year)?></strong>

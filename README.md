@@ -16,6 +16,7 @@ PHP project for:
 - calendar overview
 - daily cycle listing
 - live view for running programs
+- per-device pattern catalog for historical programs
 - chart visualization
 - remaining-time estimation for currently running cycles based on similar historical runs
 
@@ -31,3 +32,8 @@ PHP project for:
 - the app compares the current partial profile with historical finished profiles of the same device
 - matching uses curve shape, energy, peak power and elapsed runtime
 - `public/live.php` shows status, profile type, estimated total duration, elapsed time, remaining minutes and confidence
+
+## Historical program catalog
+- `public/patterns.php` lists all devices with detected historical program groups
+- `public/device_patterns.php` shows detected program clusters for one device
+- every cluster visualizes its normalized 60-step centroid profile and recent matching cycles
